@@ -1,0 +1,32 @@
+plugins {
+    id 'java'
+}
+
+group = 'dev.sixik'
+version = '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+    maven {
+        url "https://libraries.minecraft.net"
+    }
+}
+
+dependencies {
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    implementation 'com.google.code.gson:gson:2.10.1'   // JsonElement and the rest used and exposed in JsonOps
+    implementation 'com.google.guava:guava:32.1.2-jre'  // TypeToken primarily exposed
+    implementation 'it.unimi.dsi:fastutil:8.5.12'       // various collection types are used in public API
+
+    implementation 'org.slf4j:slf4j-api:2.0.9'
+    implementation 'org.apache.commons:commons-lang3:3.20.0'
+    implementation 'io.netty:netty-all:4.2.0.Final'
+}
+
+
+test {
+    useJUnitPlatform()
+}
