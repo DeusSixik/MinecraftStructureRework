@@ -26,11 +26,13 @@ import java.util.stream.LongStream;
 
 public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainerRO<T> {
     private static final int MIN_PALETTE_BITS = 0;
-    private final PaletteResize<T> dummyPaletteResize = (i, objectx) -> 0;
+    private final PaletteResize<T> dummyPaletteResize = (i, objectx) -> MIN_PALETTE_BITS;
     private final IdMap<T> registry;
     private volatile Data<T> data;
     private final Strategy strategy;
     private final ThreadingDetector threadingDetector = new ThreadingDetector("PalettedContainer");
+
+    private final Object resizeLock = new Object();
 
     public void acquire() {
 //        this.threadingDetector.checkAndLock();
@@ -55,21 +57,43 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
     public PalettedContainer(IdMap<T> idMap, T object, Strategy strategy) {
         this.strategy = strategy;
         this.registry = idMap;
-        this.data = this.createOrReuseData(null, 0);
+        this.data = this.createOrReuseData(null, MIN_PALETTE_BITS);
         this.data.palette.idFor(object);
     }
 
     private Data<T> createOrReuseData(@Nullable Data<T> data, int i) {
-        Configuration<T> configuration = this.strategy.<T>getConfiguration(this.registry, i);
+        Configuration<T> configuration = this.strategy.getConfiguration(this.registry, i);
         return data != null && configuration.equals(data.configuration()) ? data : configuration.createData(this.registry, this, this.strategy.size());
     }
 
-    public int onResize(int i, T object) {
-        Data<T> data = this.data;
-        Data<T> data2 = this.createOrReuseData(data, i);
-        data2.copyFrom(data.palette, data.storage);
-        this.data = data2;
-        return data2.palette.idFor(object);
+    @Override
+    public int onResize(int newBits, T object) {
+        for (;;) {
+            Data<T> cur = this.data;
+
+            // кто-то уже расширил до нужного или больше
+            if (cur.storage.getBits() >= newBits) {
+                return cur.palette.idFor(object);
+            }
+
+            synchronized (resizeLock) {
+                Data<T> cur2 = this.data;
+
+                if (cur2.storage.getBits() >= newBits) {
+                    continue; // пока ждали лок, другой поток уже расширил
+                }
+
+                Data<T> next = this.createOrReuseData(cur2, newBits);
+
+                // копируем "живое" состояние; записи, случившиеся параллельно, догонятся ретраями set()
+                next.copyFrom(cur2.palette, cur2.storage);
+
+                this.data = next;
+
+                // важно: возвращаем id из новой палитры (а не из старой)
+                return next.palette.idFor(object);
+            }
+        }
     }
 
     public T getAndSet(int i, int j, int k, T object) {
@@ -89,10 +113,19 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
         return (T)this.getAndSet(this.strategy.getIndex(i, j, k), object);
     }
 
-    private T getAndSet(int i, T object) {
-        int j = this.data.palette.idFor(object);
-        int k = this.data.storage.getAndSet(i, j);
-        return (T)this.data.palette.valueFor(k);
+    private T getAndSet(int index, T object) {
+        for (;;) {
+            Data<T> d = this.data;
+
+            int id = d.palette.idFor(object);
+            if (this.data != d) continue;
+
+            int prev = d.storage.getAndSet(index, id);
+
+            if (this.data != d) continue;
+
+            return d.palette.valueFor(prev);
+        }
     }
 
     public void set(Position position, T object) {
@@ -110,9 +143,26 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
 
     }
 
-    private void set(int i, T object) {
-        int j = this.data.palette.idFor(object);
-        this.data.storage.set(i, j);
+    private void set(int index, T object) {
+        for (;;) {
+            Data<T> d = this.data;
+
+            int id = d.palette.idFor(object); // может вызвать onResize() и сменить this.data
+
+            // если data сменилась пока вычисляли id — начинать заново, чтобы id и storage были из одной версии
+            if (this.data != d) {
+                continue;
+            }
+
+            d.storage.set(index, id);
+
+            // если resize случился ПОСЛЕ нашей записи в старый storage — повторяем запись уже в новый
+            if (this.data != d) {
+                continue;
+            }
+
+            return;
+        }
     }
 
     public T get(Position position) {
@@ -131,9 +181,9 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
     public void getAll(Consumer<T> consumer) {
         Palette<T> palette = this.data.palette();
         IntSet intSet = new IntArraySet();
-        BitStorage var10000 = this.data.storage;
+        BitStorage storage = this.data.storage;
         Objects.requireNonNull(intSet);
-        var10000.getAll(intSet::add);
+        storage.getAll(intSet::add);
         intSet.forEach((i) -> consumer.accept(palette.valueFor(i)));
     }
 
@@ -169,8 +219,8 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
         int j = strategy.calculateBitsForSerialization(idMap, list.size());
         Configuration<T> configuration = strategy.<T>getConfiguration(idMap, j);
         BitStorage bitStorage;
-        if (j == 0) {
-            bitStorage = new ZeroBitStorage(i);
+        if (j == MIN_PALETTE_BITS) {
+            bitStorage = new AtomicAlignedBitStorage(8, i);
         } else {
             Optional<LongStream> optional = packedData.storage();
             if (optional.isEmpty()) {
@@ -181,14 +231,14 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
 
             try {
                 if (configuration.factory() == PalettedContainer.Strategy.GLOBAL_PALETTE_FACTORY) {
-                    Palette<T> palette = new HashMapPalette(idMap, j, (ix, object) -> 0, list);
-                    SimpleBitStorage simpleBitStorage = new SimpleBitStorage(j, i, ls);
+                    Palette<T> palette = new HashMapPalette(idMap, j, (ix, object) -> MIN_PALETTE_BITS, list);
+                    AtomicAlignedBitStorage atomicAlignedBitStorage = new AtomicAlignedBitStorage(j, i, ls);
                     int[] is = new int[i];
-                    simpleBitStorage.unpack(is);
+                    atomicAlignedBitStorage.unpack(is);
                     swapPalette(is, (ix) -> idMap.getId(palette.valueFor(ix)));
-                    bitStorage = new SimpleBitStorage(configuration.bits(), i, is);
+                    bitStorage = new AtomicAlignedBitStorage(configuration.bits(), i, is);
                 } else {
-                    bitStorage = new SimpleBitStorage(configuration.bits(), i, ls);
+                    bitStorage = new AtomicAlignedBitStorage(configuration.bits(), i, ls);
                 }
             } catch (SimpleBitStorage.InitializationException initializationException) {
                 return DataResult.error(() -> "Failed to read PalettedContainer: " + initializationException.getMessage());
@@ -210,9 +260,9 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
             swapPalette(is, (ix) -> hashMapPalette.idFor(this.data.palette.valueFor(ix)));
             int j = strategy.calculateBitsForSerialization(idMap, hashMapPalette.getSize());
             Optional<LongStream> optional;
-            if (j != 0) {
-                SimpleBitStorage simpleBitStorage = new SimpleBitStorage(j, i, is);
-                optional = Optional.of(Arrays.stream(simpleBitStorage.getRaw()));
+            if (j != MIN_PALETTE_BITS) {
+                AtomicAlignedBitStorage alignedBitStorage = new AtomicAlignedBitStorage(j, i, is);
+                optional = Optional.of(Arrays.stream(alignedBitStorage.getRaw()));
             } else {
                 optional = Optional.empty();
             }
@@ -254,12 +304,12 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
     }
 
     public PalettedContainer<T> recreate() {
-        return new PalettedContainer<T>(this.registry, this.data.palette.valueFor(0), this.strategy);
+        return new PalettedContainer<T>(this.registry, this.data.palette.valueFor(MIN_PALETTE_BITS), this.strategy);
     }
 
     public void count(CountConsumer<T> countConsumer) {
         if (this.data.palette.getSize() == 1) {
-            countConsumer.accept(this.data.palette.valueFor(0), this.data.storage.getSize());
+            countConsumer.accept(this.data.palette.valueFor(MIN_PALETTE_BITS), this.data.storage.getSize());
         } else {
             Int2IntOpenHashMap int2IntOpenHashMap = new Int2IntOpenHashMap();
             this.data.storage.getAll((i) -> int2IntOpenHashMap.addTo(i, 1));
@@ -269,7 +319,8 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
 
     static record Configuration<T>(Palette.Factory factory, int bits) {
         public Data<T> createData(IdMap<T> idMap, PaletteResize<T> paletteResize, int i) {
-            BitStorage bitStorage = (BitStorage)(this.bits == 0 ? new ZeroBitStorage(i) : new SimpleBitStorage(this.bits, i));
+//            BitStorage bitStorage = this.bits == MIN_PALETTE_BITS ? new ZeroBitStorage(i) : new AtomicAlignedBitStorage(this.bits, i);
+            BitStorage bitStorage = new AtomicAlignedBitStorage(this.bits, i);
             Palette<T> palette = this.factory.create(this.bits, idMap, paletteResize, List.of());
             return new Data<T>(this, bitStorage, palette);
         }
@@ -303,50 +354,25 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
         public static final Palette.Factory SINGLE_VALUE_PALETTE_FACTORY = SingleValuePalette::create;
         public static final Palette.Factory LINEAR_PALETTE_FACTORY = LinearPalette::create;
         public static final Palette.Factory HASHMAP_PALETTE_FACTORY = HashMapPalette::create;
+        public static final Palette.Factory CONCURRENT_HASHMAP_PALETTE_FACTORY = ConcurrentHashMapPalette::create;
         static final Palette.Factory GLOBAL_PALETTE_FACTORY = GlobalPalette::create;
         public static final Strategy SECTION_STATES = new Strategy(4) {
             public <A> Configuration<A> getConfiguration(IdMap<A> idMap, int i) {
-                Configuration var10000;
-                switch (i) {
-                    case 0:
-                        var10000 = new Configuration(SINGLE_VALUE_PALETTE_FACTORY, i);
-                        break;
-                    case 1:
-                    case 2:
-                    case 3:
-                    case 4:
-                        var10000 = new Configuration(LINEAR_PALETTE_FACTORY, 4);
-                        break;
-                    case 5:
-                    case 6:
-                    case 7:
-                    case 8:
-                        var10000 = new Configuration(HASHMAP_PALETTE_FACTORY, i);
-                        break;
-                    default:
-                        var10000 = new Configuration(PalettedContainer.Strategy.GLOBAL_PALETTE_FACTORY, Mth.ceillog2(idMap.size()));
-                }
-
-                return var10000;
+                return switch (i) {
+//                    case 0 -> new Configuration<>(SINGLE_VALUE_PALETTE_FACTORY, i);
+//                    case 1, 2, 3, 4 -> new Configuration<>(LINEAR_PALETTE_FACTORY, 4);
+                    case 0, 1, 2, 3, 4, 5, 6, 7, 8 -> new Configuration<>(CONCURRENT_HASHMAP_PALETTE_FACTORY, i);
+                    default -> new Configuration<>(Strategy.GLOBAL_PALETTE_FACTORY, Mth.ceillog2(idMap.size()));
+                };
             }
         };
         public static final Strategy SECTION_BIOMES = new Strategy(2) {
             public <A> Configuration<A> getConfiguration(IdMap<A> idMap, int i) {
-                Configuration var10000;
-                switch (i) {
-                    case 0:
-                        var10000 = new Configuration(SINGLE_VALUE_PALETTE_FACTORY, i);
-                        break;
-                    case 1:
-                    case 2:
-                    case 3:
-                        var10000 = new Configuration(LINEAR_PALETTE_FACTORY, i);
-                        break;
-                    default:
-                        var10000 = new Configuration(PalettedContainer.Strategy.GLOBAL_PALETTE_FACTORY, Mth.ceillog2(idMap.size()));
-                }
-
-                return var10000;
+                return switch (i) {
+                    case 0 -> new Configuration<>(SINGLE_VALUE_PALETTE_FACTORY, i);
+                    case 1, 2, 3 -> new Configuration<>(LINEAR_PALETTE_FACTORY, i);
+                    default -> new Configuration<>(Strategy.GLOBAL_PALETTE_FACTORY, Mth.ceillog2(idMap.size()));
+                };
             }
         };
         private final int sizeBits;
@@ -375,5 +401,14 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
     @FunctionalInterface
     public interface CountConsumer<T> {
         void accept(T object, int i);
+    }
+
+    @Override
+    public String toString() {
+        return "bits: " + data.configuration.bits;
+    }
+
+    public int getBits() {
+        return data.configuration.bits;
     }
 }

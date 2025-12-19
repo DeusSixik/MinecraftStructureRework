@@ -7,12 +7,9 @@ import dev.sixik.mcsr.rework.paletted_container.PalettedContainer;
 import net.minecraft.core.IdMapper;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
-import java.util.Random;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 public class Main {
 
     private static final IdMapper<Block> BLOCKS = new IdMapper<>();
@@ -22,9 +19,9 @@ public class Main {
 
         PalettedContainer<Block> palettedContainer = new PalettedContainer<>(BLOCKS, new Block(0), PalettedContainer.Strategy.SECTION_STATES);
 
-        final int paralel = Runtime.getRuntime().availableProcessors();
+        final int paralel = 20;
 
-        int taskRepeat = 5000000;
+        final int taskRepeat = 1;
 
         for (int f = 0; f < taskRepeat; f++) {
             CompletableFuture<Void>[] tasks = new CompletableFuture[paralel];
@@ -33,9 +30,7 @@ public class Main {
                 final int offset = 1 + i;
                 tasks[i] = CompletableFuture.runAsync(() -> {
                             fillToPaletted(palettedContainer, 15, s -> {
-                                if(s.x % offset != 0 && s.y % offset != 0 && s.z % offset != 0)
-                                    return BlocksRegister.getRandomBlock();
-                                return null;
+                                return BlocksRegister.getRandomBlock();
                             });
                         }
                 );
@@ -43,7 +38,9 @@ public class Main {
 
             CompletableFuture.allOf(tasks).join();
         }
+
         printPaletted(palettedContainer, 15);
+        System.out.println(palettedContainer);
     }
 
     private static void fillToPaletted(PalettedContainer<Block> container, int size, Function<Position, @Nullable Block> setBlock) {
@@ -75,11 +72,40 @@ public class Main {
                 position.y = y;
                 for (int x = 0; x < size; x++) {
                     position.x = x;
+
                     Block block = container.get(position);
-                    // Выводим символ или ID блока
                     System.out.print(block);
                 }
                 System.out.println();
+            }
+        }
+    }
+
+    public static void testPaletteRace() {
+        PalettedContainer<Block> container = new PalettedContainer<>(BLOCKS, BlocksRegister.AIR, PalettedContainer.Strategy.SECTION_STATES);
+        int threads = 16;
+        CompletableFuture<?>[] tasks = new CompletableFuture[threads];
+
+        for (int t = 0; t < threads; t++) {
+            final int threadId = t;
+            tasks[t] = CompletableFuture.runAsync(() -> {
+                // Каждый поток ставит блоки, которых ГАРАНТИРОВАННО нет в палитре
+                // Это спровоцирует конкурентный onResize
+                for (int i = 0; i < 10; i++) {
+                    Block uniqueBlock = new Block(1000 + (threadId * 10) + i);
+                    container.set(new Position(threadId, i, 0), uniqueBlock);
+                }
+            });
+        }
+        CompletableFuture.allOf(tasks).join();
+
+        // Проверка: каждый блок должен быть на своем месте
+        for (int t = 0; t < threads; t++) {
+            for (int i = 0; i < 10; i++) {
+                Block b = container.get(new Position(t, i, 0));
+                if (b.getId() != 1000 + (t * 10) + i) {
+                    System.err.println("Ошибка! Блок в позиции " + t + "," + i + " испорчен: " + b.getId());
+                }
             }
         }
     }

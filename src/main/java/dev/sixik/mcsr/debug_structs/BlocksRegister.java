@@ -6,7 +6,7 @@ import java.util.*;
 
 public class BlocksRegister {
 
-    public static IdMapper<Block> BLOCKS = new IdMapper<>();
+    public static IdMapper<Block> BLOCKS = new IdMapper<>(2000);
     public static Map<Long, String> NAMES = new HashMap<>();
 
     public static final Block AIR = register("air", 0);
@@ -16,11 +16,18 @@ public class BlocksRegister {
     public static final Block WOOD = register("wood", 4);
 
     public static void init() {
-        randomBlockGenerator(100);
+        randomBlockGenerator(200);
     }
 
     public static Block getRandomBlock() {
         return BLOCKS.byId(new Random().nextInt(BLOCKS.size()));
+    }
+
+    private static int next = 0;
+
+    public static Block getNext() {
+        if(next >= BLOCKS.size()) next = 1;
+        return BLOCKS.byId(next++);
     }
 
     public static void randomBlockGenerator(int count) {

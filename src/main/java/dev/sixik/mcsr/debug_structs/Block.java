@@ -12,4 +12,8 @@ public class Block {
     public String toString() {
         return "[" + BlocksRegister.NAMES.get(id) + ", " + id + "]";
     }
+
+    public long getId() {
+        return id;
+    }
 }

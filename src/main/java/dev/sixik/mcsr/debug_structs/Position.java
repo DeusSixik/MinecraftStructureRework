@@ -33,4 +33,13 @@ public class Position {
     public static int toSection(int value) {
         return value & SECTION_BITS;
     }
+
+    @Override
+    public String toString() {
+        return "Position{" +
+                "x=" + toSectionX() +
+                ", y=" + toSectionY() +
+                ", z=" + toSectionZ() +
+                '}';
+    }
 }
