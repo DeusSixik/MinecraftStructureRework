@@ -16,7 +16,7 @@ public class BlocksRegister {
     public static final Block WOOD = register("wood", 4);
 
     public static void init() {
-        randomBlockGenerator(200);
+        randomBlockGenerator(500);
     }
 
     public static Block getRandomBlock() {
@@ -26,7 +26,7 @@ public class BlocksRegister {
     private static int next = 0;
 
     public static Block getNext() {
-        if(next >= BLOCKS.size()) next = 1;
+        if (next >= BLOCKS.size()) next = 1;
         return BLOCKS.byId(next++);
     }
 

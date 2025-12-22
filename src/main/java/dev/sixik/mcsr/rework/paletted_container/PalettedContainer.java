@@ -220,25 +220,25 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
         Configuration<T> configuration = strategy.<T>getConfiguration(idMap, j);
         BitStorage bitStorage;
         if (j == MIN_PALETTE_BITS) {
-            bitStorage = new AtomicAlignedBitStorage(8, i);
+            bitStorage = new AtomicSimpleBitStorage(8, i);
         } else {
             Optional<LongStream> optional = packedData.storage();
             if (optional.isEmpty()) {
                 return DataResult.error(() -> "Missing values for non-zero storage");
             }
 
-            long[] ls = ((LongStream)optional.get()).toArray();
+            long[] ls = optional.get().toArray();
 
             try {
                 if (configuration.factory() == PalettedContainer.Strategy.GLOBAL_PALETTE_FACTORY) {
                     Palette<T> palette = new HashMapPalette(idMap, j, (ix, object) -> MIN_PALETTE_BITS, list);
-                    AtomicAlignedBitStorage atomicAlignedBitStorage = new AtomicAlignedBitStorage(j, i, ls);
+                    AtomicSimpleBitStorage atomicAlignedBitStorage = new AtomicSimpleBitStorage(j, i, ls);
                     int[] is = new int[i];
                     atomicAlignedBitStorage.unpack(is);
                     swapPalette(is, (ix) -> idMap.getId(palette.valueFor(ix)));
-                    bitStorage = new AtomicAlignedBitStorage(configuration.bits(), i, is);
+                    bitStorage = new AtomicSimpleBitStorage(configuration.bits(), i, is);
                 } else {
-                    bitStorage = new AtomicAlignedBitStorage(configuration.bits(), i, ls);
+                    bitStorage = new AtomicSimpleBitStorage(configuration.bits(), i, ls);
                 }
             } catch (SimpleBitStorage.InitializationException initializationException) {
                 return DataResult.error(() -> "Failed to read PalettedContainer: " + initializationException.getMessage());
@@ -261,7 +261,7 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
             int j = strategy.calculateBitsForSerialization(idMap, hashMapPalette.getSize());
             Optional<LongStream> optional;
             if (j != MIN_PALETTE_BITS) {
-                AtomicAlignedBitStorage alignedBitStorage = new AtomicAlignedBitStorage(j, i, is);
+                AtomicSimpleBitStorage alignedBitStorage = new AtomicSimpleBitStorage(j, i, is);
                 optional = Optional.of(Arrays.stream(alignedBitStorage.getRaw()));
             } else {
                 optional = Optional.empty();
@@ -320,7 +320,7 @@ public class PalettedContainer<T> implements PaletteResize<T>, PalettedContainer
     static record Configuration<T>(Palette.Factory factory, int bits) {
         public Data<T> createData(IdMap<T> idMap, PaletteResize<T> paletteResize, int i) {
 //            BitStorage bitStorage = this.bits == MIN_PALETTE_BITS ? new ZeroBitStorage(i) : new AtomicAlignedBitStorage(this.bits, i);
-            BitStorage bitStorage = new AtomicAlignedBitStorage(this.bits, i);
+            BitStorage bitStorage = new AtomicSimpleBitStorage(this.bits, i);
             Palette<T> palette = this.factory.create(this.bits, idMap, paletteResize, List.of());
             return new Data<T>(this, bitStorage, palette);
         }

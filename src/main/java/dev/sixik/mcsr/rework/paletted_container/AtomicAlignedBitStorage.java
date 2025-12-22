@@ -3,6 +3,7 @@ package dev.sixik.mcsr.rework.paletted_container;
 import javax.annotation.Nullable;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
+import java.util.Arrays;
 import java.util.function.IntConsumer;
 
 public class AtomicAlignedBitStorage implements BitStorage {
@@ -76,7 +77,7 @@ public class AtomicAlignedBitStorage implements BitStorage {
         int longIdx = index / valuesPerLong;
         int shift = (index % valuesPerLong) * bits;
         long valueMask = mask << shift;
-        long newValueFinal = (long) (value & mask) << shift;
+        long newValueFinal = (value & mask) << shift;
 
         while (true) {
             long oldLong = (long) VOLATILE_ACCESS.getVolatile(data, longIdx);
@@ -92,7 +93,6 @@ public class AtomicAlignedBitStorage implements BitStorage {
 
     @Override
     public void set(int index, int value) {
-        // Мы уже реализовали это через CAS loop в предыдущем шаге
         getAndSet(index, value);
     }
 
@@ -106,9 +106,11 @@ public class AtomicAlignedBitStorage implements BitStorage {
 
     @Override
     public long[] getRaw() {
-        // ВНИМАНИЕ: Возврат прямой ссылки на массив нарушает инкапсуляцию.
-        // В многопотоке лучше возвращать копию, если это используется для чтения.
-        return this.data;
+        long[] copy = new long[this.data.length];
+        for (int i = 0; i < this.data.length; i++) {
+            copy[i] = (long) VOLATILE_ACCESS.getAcquire(this.data, i);
+        }
+        return copy;
     }
 
     @Override

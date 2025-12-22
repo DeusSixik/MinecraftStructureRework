@@ -258,6 +258,30 @@ public class PalettedContainerTest {
         System.out.println("---- Test Chaos Stress End ----");
     }
 
+    @Test
+    public void testMemorySize() {
+        System.out.println("---- Test Memory Size Start ----");
+        BlocksRegister.init();
+        final PalettedContainer<Block> container = new PalettedContainer<>(BLOCKS, BlocksRegister.AIR, PalettedContainer.Strategy.SECTION_STATES);
+
+        final int palettedSize = 16;
+
+        final Position position = new Position();
+        for (int x = 0; x < palettedSize; x++) {
+            position.x = x;
+            for (int y = 0; y < palettedSize; y++) {
+                position.y = y;
+                for (int z = 0; z < palettedSize; z++) {
+                    position.z = z;
+                    container.set(position, BlocksRegister.getRandomBlock());
+                }
+            }
+        }
+
+        System.out.println("Size: " + container.getSerializedSize());
+        System.out.println("---- Test Memory Size End ----");
+    }
+
     private static void runChaosTest(PalettedContainer<Block> container) {
         int threadCount = Runtime.getRuntime().availableProcessors() * 2;
         ExecutorService executor = Executors.newFixedThreadPool(threadCount);

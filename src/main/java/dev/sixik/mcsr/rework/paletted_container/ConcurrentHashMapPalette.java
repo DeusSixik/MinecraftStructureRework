@@ -23,6 +23,13 @@ public class ConcurrentHashMapPalette<T> implements Palette<T> {
         this.values = CrudeIncrementalIntIdentityHashBiMap.create(1 << i);
     }
 
+    private ConcurrentHashMapPalette(IdMap<T> idMap, int i, PaletteResize<T> paletteResize, CrudeIncrementalIntIdentityHashBiMap<T> crudeIncrementalIntIdentityHashBiMap) {
+        this.registry = idMap;
+        this.bits = i;
+        this.resizeHandler = paletteResize;
+        this.values = crudeIncrementalIntIdentityHashBiMap;
+    }
+
     public ConcurrentHashMapPalette(IdMap<T> idMap, int i, PaletteResize<T> paletteResize, List<T> list) {
         this(idMap, i, paletteResize);
         list.forEach(this.values::add);
@@ -115,7 +122,7 @@ public class ConcurrentHashMapPalette<T> implements Palette<T> {
 
     @Override
     public Palette<T> copy() {
-        return new ConcurrentHashMapPalette<>(this.registry, this.bits, this.resizeHandler);
+        return new ConcurrentHashMapPalette<>(this.registry, this.bits, this.resizeHandler, this.values.copy());
     }
 
     public static <A> Palette<A> create(int i, IdMap<A> idMap, PaletteResize<A> paletteResize, List<A> list) {

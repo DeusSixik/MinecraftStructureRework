@@ -12,12 +12,10 @@ import java.util.function.Function;
 
 public class Main {
 
-    private static final IdMapper<Block> BLOCKS = new IdMapper<>();
-
     public static void main(String[] args) {
         BlocksRegister.init();
 
-        PalettedContainer<Block> palettedContainer = new PalettedContainer<>(BLOCKS, new Block(0), PalettedContainer.Strategy.SECTION_STATES);
+        PalettedContainer<Block> palettedContainer = new PalettedContainer<>(BlocksRegister.BLOCKS, new Block(0), PalettedContainer.Strategy.SECTION_STATES);
 
         final int paralel = 20;
 
@@ -82,7 +80,7 @@ public class Main {
     }
 
     public static void testPaletteRace() {
-        PalettedContainer<Block> container = new PalettedContainer<>(BLOCKS, BlocksRegister.AIR, PalettedContainer.Strategy.SECTION_STATES);
+        PalettedContainer<Block> container = new PalettedContainer<>(BlocksRegister.BLOCKS, BlocksRegister.AIR, PalettedContainer.Strategy.SECTION_STATES);
         int threads = 16;
         CompletableFuture<?>[] tasks = new CompletableFuture[threads];
 
