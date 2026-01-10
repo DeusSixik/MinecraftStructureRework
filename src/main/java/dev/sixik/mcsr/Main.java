@@ -1,110 +1,64 @@
 package dev.sixik.mcsr;
 
-import dev.sixik.mcsr.debug_structs.Block;
-import dev.sixik.mcsr.debug_structs.BlocksRegister;
-import dev.sixik.mcsr.debug_structs.Position;
-import dev.sixik.mcsr.rework.paletted_container.PalettedContainer;
-import net.minecraft.core.IdMapper;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import dev.sixik.mcsr.task_system.CoroutineScheduler;
+import dev.sixik.mcsr.task_system.CoroutineTasks;
 
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Function;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Random;
+import java.util.concurrent.TimeUnit;
 
 public class Main {
 
-    public static void main(String[] args) {
-        BlocksRegister.init();
+    public static void main(String[] args) throws InterruptedException {
+        CoroutineScheduler scheduler = new CoroutineScheduler(
+                2,
+                TimeUnit.MICROSECONDS.toNanos(500)
+        );
 
-        PalettedContainer<Block> palettedContainer = new PalettedContainer<>(BlocksRegister.BLOCKS, new Block(0), PalettedContainer.Strategy.SECTION_STATES);
+        final int[] genes = new int[]{-150, -200, -180, -250, -100};
+        final Random random = new Random();
 
-        final int paralel = 20;
+        var handle = scheduler.submit(
+            CoroutineTasks.<int[], int[], String>builder(genes)
+                .next(state -> {
+                    boolean anyReachedGoal = false;
 
-        final int taskRepeat = 1;
+                    for (int i = 0; i < state.length; i++) {
+                        state[i] += random.nextInt(3);
 
-        for (int f = 0; f < taskRepeat; f++) {
-            CompletableFuture<Void>[] tasks = new CompletableFuture[paralel];
-
-            for (int i = 0; i < paralel; i++) {
-                final int offset = 1 + i;
-                tasks[i] = CompletableFuture.runAsync(() -> {
-                            fillToPaletted(palettedContainer, 15, s -> {
-                                return BlocksRegister.getRandomBlock();
-                            });
+                        if ((state[i] / 2.65f) >= 0.0) {
+                            anyReachedGoal = true;
                         }
-                );
+                    }
+
+                    if (anyReachedGoal) {
+                        return new CoroutineScheduler.Step.Done<>("Evolution Complete!");
+                    }
+
+                    return new CoroutineScheduler.Step.Yield<>(state.clone());
+                })
+                .build(),
+            10
+        );
+        handle.cancel();
+
+        int i = 0;
+        while (true) {
+            final boolean hanlder_done = handle.isDone();
+
+            if (hanlder_done) {
+                break;
             }
 
-            CompletableFuture.allOf(tasks).join();
-        }
-
-        printPaletted(palettedContainer, 15);
-        System.out.println(palettedContainer);
-    }
-
-    private static void fillToPaletted(PalettedContainer<Block> container, int size, Function<Position, @Nullable Block> setBlock) {
-        Position position = new Position();
-
-        for (int x = 0; x < size; x++) {
-            position.x = x;
-            for (int y = 0; y < size; y++) {
-                position.y = y;
-                for (int z = 0; z < size; z++) {
-                    position.z = z;
-
-                    final Block block = setBlock.apply(position);
-                    if (block == null) continue;
-                    container.set(position, block);
-                }
+            if (i % 100 != 0) {
+                System.out.println(Arrays.toString(handle.latestYield()));
             }
+            i++;
         }
-    }
 
-    private static void printPaletted(PalettedContainer<Block> container, int size) {
-        Position position = new Position();
+        System.out.println(Arrays.toString(handle.latestYield()) + " | " + handle.done().join());
 
-        for (int z = 0; z < size; z++) {
-            position.z = z;
-            System.out.println("\n=== Z = " + z + " ===");
-
-            for (int y = size - 1; y >= 0; y--) {
-                position.y = y;
-                for (int x = 0; x < size; x++) {
-                    position.x = x;
-
-                    Block block = container.get(position);
-                    System.out.print(block);
-                }
-                System.out.println();
-            }
-        }
-    }
-
-    public static void testPaletteRace() {
-        PalettedContainer<Block> container = new PalettedContainer<>(BlocksRegister.BLOCKS, BlocksRegister.AIR, PalettedContainer.Strategy.SECTION_STATES);
-        int threads = 16;
-        CompletableFuture<?>[] tasks = new CompletableFuture[threads];
-
-        for (int t = 0; t < threads; t++) {
-            final int threadId = t;
-            tasks[t] = CompletableFuture.runAsync(() -> {
-                // Каждый поток ставит блоки, которых ГАРАНТИРОВАННО нет в палитре
-                // Это спровоцирует конкурентный onResize
-                for (int i = 0; i < 10; i++) {
-                    Block uniqueBlock = new Block(1000 + (threadId * 10) + i);
-                    container.set(new Position(threadId, i, 0), uniqueBlock);
-                }
-            });
-        }
-        CompletableFuture.allOf(tasks).join();
-
-        // Проверка: каждый блок должен быть на своем месте
-        for (int t = 0; t < threads; t++) {
-            for (int i = 0; i < 10; i++) {
-                Block b = container.get(new Position(t, i, 0));
-                if (b.getId() != 1000 + (t * 10) + i) {
-                    System.err.println("Ошибка! Блок в позиции " + t + "," + i + " испорчен: " + b.getId());
-                }
-            }
-        }
+//        System.out.println(handle.done().join());
     }
 }
