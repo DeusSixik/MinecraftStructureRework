@@ -33,6 +33,8 @@ public class LoopPerformanceTest {
             testArrayForEach();
             testListForLoop();
             testListForEach();
+            testWhileLoop();
+            testReverseWhile();
         }
         System.out.println("Warmup done. Running tests...\n");
     }
@@ -58,6 +60,7 @@ public class LoopPerformanceTest {
         long start = System.nanoTime();
 
         long sum = 0;
+
         for (int val : array) {
             sum += val;
         }
@@ -87,6 +90,7 @@ public class LoopPerformanceTest {
         long start = System.nanoTime();
 
         long sum = 0;
+
         for (Integer val : list) { // Iterator + Autounboxing
             sum += val;
         }
@@ -94,8 +98,39 @@ public class LoopPerformanceTest {
         printResult("List Foreach", start, sum);
     }
 
+    @Test
+    @Order(5)
+    void testWhileLoop() {
+        long start = System.nanoTime();
+        long sum = 0;
+        int i = 0;
+        int size = list.size();
+
+        // Стандартный while
+        while (i < size) {
+            sum += list.get(i);
+            i++;
+        }
+        printResult("List While", start, sum);
+    }
+
+    @Test
+    @Order(6)
+    void testReverseWhile() {
+        long start = System.nanoTime();
+        long sum = 0;
+        int i = list.size() - 1;
+
+        // Обратный while (сравнение с 0 процессору "нравится" чуть больше)
+        while (i >= 0) {
+            sum += list.get(i);
+            i--;
+        }
+        printResult("List While(Rev)", start, sum);
+    }
+
     private void printResult(String name, long startNano, long sum) {
-        long duration = (System.nanoTime() - startNano) / 1_000_000;
-        System.out.printf("%-15s: %4d ms (Sum: %d)%n", name, duration, sum);
+        long durationNs = System.nanoTime() - startNano;
+        System.out.printf("%-15s: %6d µs (Sum: %d)%n", name, durationNs / 1000, sum);
     }
 }
