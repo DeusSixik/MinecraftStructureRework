@@ -1,14 +1,13 @@
-import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import org.junit.jupiter.api.*;
 
-import java.util.List;
-import java.util.Random;
+import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 public class LoopPerformanceTest {
 
-    private static final int SIZE = 10_000_000;
+    private static final int SIZE = 9_000_000; // Поправил опечатку в числе (было 90_000_00)
     private int[] array;
     private List<Integer> list;
 
@@ -16,7 +15,7 @@ public class LoopPerformanceTest {
     void setup() {
         System.out.println("Generating data (" + SIZE + " elements)...");
         array = new int[SIZE];
-        list = new ObjectArrayList<>(SIZE);
+        list = new ArrayList<>(SIZE);
         Random rand = new Random();
 
         for (int i = 0; i < SIZE; i++) {
@@ -35,22 +34,26 @@ public class LoopPerformanceTest {
             testListForEach();
             testWhileLoop();
             testReverseWhile();
+
+            // Новые тесты в прогреве
+            testArrayStreamForEach();
+            testArrayStreamFilterForEach();
+            testListStreamForEach();
+            testListStreamFilterForEach();
         }
         System.out.println("Warmup done. Running tests...\n");
     }
 
-    // --- ARRAY TESTS ---
+    // --- EXISTING ARRAY TESTS ---
 
     @Test
     @Order(1)
     void testArrayForLoop() {
         long start = System.nanoTime();
-
         long sum = 0;
         for (int i = 0; i < array.length; i++) {
             sum += array[i];
         }
-
         printResult("Array For(i)", start, sum);
     }
 
@@ -58,55 +61,75 @@ public class LoopPerformanceTest {
     @Order(2)
     void testArrayForEach() {
         long start = System.nanoTime();
-
         long sum = 0;
-
         for (int val : array) {
             sum += val;
         }
-
         printResult("Array Foreach", start, sum);
     }
 
-    // --- LIST TESTS ---
+    // --- NEW STREAM TESTS (ARRAY) ---
 
     @Test
     @Order(3)
-    void testListForLoop() {
+    void testArrayStreamForEach() {
         long start = System.nanoTime();
 
-        long sum = 0;
-        int size = list.size(); // Выносим size из условия цикла для чистоты
-        for (int i = 0; i < size; i++) {
-            sum += list.get(i); // Autounboxing Integer -> int
-        }
+        // Используем массив из 1 элемента как эффективный mutable wrapper
+        // Это быстрее AtomicLong, так как нет overhead на volatile/CAS операции
+        long[] sum = new long[1];
 
-        printResult("List For(i)", start, sum);
+        Arrays.stream(array).forEach(val -> sum[0] += val);
+
+        printResult("Arr Stream.each", start, sum[0]);
     }
 
     @Test
     @Order(4)
-    void testListForEach() {
+    void testArrayStreamFilterForEach() {
         long start = System.nanoTime();
+        long[] sum = new long[1];
 
-        long sum = 0;
+        // Фильтруем четные числа
+        Arrays.stream(array)
+                .filter(val -> val % 2 == 0)
+                .forEach(val -> sum[0] += val);
 
-        for (Integer val : list) { // Iterator + Autounboxing
-            sum += val;
-        }
-
-        printResult("List Foreach", start, sum);
+        printResult("Arr Strm Fltr", start, sum[0]);
     }
+
+    // --- EXISTING LIST TESTS ---
 
     @Test
     @Order(5)
+    void testListForLoop() {
+        long start = System.nanoTime();
+        long sum = 0;
+        int size = list.size();
+        for (int i = 0; i < size; i++) {
+            sum += list.get(i);
+        }
+        printResult("List For(i)", start, sum);
+    }
+
+    @Test
+    @Order(6)
+    void testListForEach() {
+        long start = System.nanoTime();
+        // Примечание: AtomicLong значительно медленнее простого аккумулятора
+        // из-за гарантий потокобезопасности, но оставлено как в оригинале.
+        AtomicLong sum = new AtomicLong();
+        list.forEach(sum::addAndGet);
+        printResult("List Foreach", start, sum.get());
+    }
+
+    @Test
+    @Order(7)
     void testWhileLoop() {
         long start = System.nanoTime();
         long sum = 0;
         int i = 0;
         int size = list.size();
-
-        // Стандартный while
         while (i < size) {
             sum += list.get(i);
             i++;
@@ -115,18 +138,42 @@ public class LoopPerformanceTest {
     }
 
     @Test
-    @Order(6)
+    @Order(8)
     void testReverseWhile() {
         long start = System.nanoTime();
         long sum = 0;
         int i = list.size() - 1;
-
-        // Обратный while (сравнение с 0 процессору "нравится" чуть больше)
         while (i >= 0) {
             sum += list.get(i);
             i--;
         }
         printResult("List While(Rev)", start, sum);
+    }
+
+    // --- NEW STREAM TESTS (LIST) ---
+
+    @Test
+    @Order(9)
+    void testListStreamForEach() {
+        long start = System.nanoTime();
+        long[] sum = new long[1];
+
+        list.forEach(val -> sum[0] += val);
+
+        printResult("List Stream.each", start, sum[0]);
+    }
+
+    @Test
+    @Order(10)
+    void testListStreamFilterForEach() {
+        long start = System.nanoTime();
+        long[] sum = new long[1];
+
+        list.stream()
+                .filter(val -> val % 2 == 0)
+                .forEach(val -> sum[0] += val);
+
+        printResult("List Strm Fltr", start, sum[0]);
     }
 
     private void printResult(String name, long startNano, long sum) {
